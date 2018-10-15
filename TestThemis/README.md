@@ -2,6 +2,7 @@
 
 ![](images/logo.png)
 Lorem ipsum o projektu
+* APIARY projetku: https://testthemis1.docs.apiary.io/#  (aktuálně jen úvodní nástřel)
 * Themis (řecky Θέμις, latinsky Themis) byla v řecké mytologii dcera boha nebe Úrana a bohyně země Gaie. Šlo o bohyni zákonného pořádku mezi lidmi a v přírodě. Themis byla ztělesněním božského řádu, zákona a zvyku
 
 ## Instalace
