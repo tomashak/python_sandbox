@@ -1,0 +1,2032 @@
+FORMAT: 1A
+HOST: https://webapi.ersteapihub.com/api/csas/sandbox/v1
+
+# TOMAS Sandbox Personal Payment Orders V1
+
+Last update: **4.5.2018**
+
+This API is a HTTP-1.1 REST service that provides access to payment orders and signing of Ceska Sporitelna customers. 
+
+* Licensed &#10004;
+
+# Authorization
+
+Most of create/update/delete active calls done by the user/application need to be signed by using particular authorization method, to confirm user intention to execute active operation and authorize user with some security tools in the same time.
+
+Following list enumerates some of the possible authorization methods used in FE:
+
+*  **NONE** - validation of user response as confirmation (e.g. confirm button click)
+*  **TAC** - validation of user response as randomly generated number/code sent to user personal device via SMS
+*  **MOBILE CASE** - validation of the user response using mobile application, this method have three forms (user can choose which he'll use)
+    *  **ONLINE** - mobile application receives PUSH notification with relevant data for authorization and user just clicks confirmation button in mobile application (data are sent over internet to bank)
+    *  **QR** - mobile application retrieves relevant data for authorization by reading QR code displayed in frontend application, generates onetime password and user enters this OTP into frontend application to authorize operation
+
+Depending on the business defined characteristic of an entity/resource, creating action requires an optional signing process:
+
+* **Immutable orders** - active calls which create/change resource (stored in local BE system) only after succesful signing by user
+
+## Immutable Orders
+
+It's not possible to read/update/delete an already existing order (request to execute active operation with resource). Existing orders/requests are only persisted for a 6 months, afterwards the orders get automatically cleaned (deleted).
+
+These orders (to create/modify particular resource) are stored in local system and signId is generated as identificator of particular order/request. This signId then will be used in signing process steps as reference ID.
+
+Therefore response payload of every POST | PUT | DELETE request for particular signable resource must include the signId in mandatory signInfo structure. The real resource object is not created, updated, deleted as long as the signing process is not succesfully finished.
+
+A signable resource has an URI identifying the resource, for example (this is not a taxative list):
+
+```
+.../banking/my/example       // for POST there is not generated ID yet
+.../banking/my/example/{id}  // for PUT and DELETE we already know ID
+```
+
+All resource specifications in this blueprint contains information whether particular resource is signable or not.
+
+If a signable resource is created (POST) or updated (PUT) or removed (DELETE), local system has stored this active request and generated signID and provided it in response payload of call as part of signInfo structure. Then FE application needs to call the ...`*/sign/{signId}` endpoint for original resource to apply signing process (with signId reference to temporary order request), for example:
+
+```
+.../banking/my/example/sign/{signId}        // different signing endpoint for POST
+.../banking/my/example/{id}/sign/{signId}   // different signing endpoint for PUT, DELETE
+```
+
+All signable resources contains reference to the sign resources which sould be used for signing process.
+
+For more information see immutable signing resources.
+
+## Authorization Examples
+
+**Authorization method** is process which is used to authorize active operation. Examples of the methods are in sigining chapter.
+These methods could be chained into scenarios. **Authorization scenario** is a list of methods (with given order) which should be successfully accomplished in order to sign active operation.
+In following chapters we'll try to show some of the examples how signing process could look. Complexity of the signing process is controlled by bank and depends on estimated risk level of the operation. Simply more risky the operation is the more complex signing process must be used (scenario with more methods, methods with higher security level).
+Which scenarios/methods can be used to sign operation is available in response of the GET signing call (see 'Immutable Signing Resources Reference - GET').
+
+### Examples With One Authorization Method
+
+This is the simplest way how to sign order. Let's assume you've created order by calling imaginal signable resource:
+
+```
+POST /banking/my/signable-resource
+
+Response payload:
+{
+    ...
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "2caf975faf9fbd7edb8c276abb6690ab30cf534d"
+    }
+}
+```
+
+Response of the call contains (among others) signInfo structure with information about signing.
+
+Since `state` of the order is OPEN we have to go through signing process. If state is NONE signing process is not neccessary.
+To start signing process you have to call GET signing method with particular signId.
+
+```
+GET /banking/my/signable-resource/sign/2caf975faf9fbd7edb8c276abb6690ab30cf534d
+
+Response payload:
+{
+    "authorizationType": "TAC",
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "2caf975faf9fbd7edb8c276abb6690ab30cf534d"
+    }
+}
+```
+
+We see that the bank requires the signing process which consists of one scenario with only one authorization method. In this case, scenarios field is not present in response and only one authorization method is available in attribute `authorizationType`. For this example we use authorization method **TAC** (do not have any other option) and we use ** Immutable Signing Resources**.
+Continue signing process with POST request.
+
+```
+POST /banking/my/signable-resource/sign/2caf975faf9fbd7edb8c276abb6690ab30cf534d
+
+Request payload:
+{
+    "authorizationType": "TAC"
+}
+
+Response payload:
+{
+    "authorizationType": "TAC",
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "2caf975faf9fbd7edb8c276abb6690ab30cf534d"
+    }
+}
+```
+
+SMS with onetime password was sent to user during this call. This password should be returned by PUT call (in `oneTimePassword` field).
+
+```
+PUT /banking/my/signable-resource/sign/2caf975faf9fbd7edb8c276abb6690ab30cf534d
+
+Request payload:
+{
+    "authorizationType": "TAC",
+    "oneTimePassword": "12345"
+}
+
+Response payload:
+{
+    "signInfo": {
+        "state": "DONE",
+        "signId": "2caf975faf9fbd7edb8c276abb6690ab30cf534d"
+    }
+}
+```
+
+Next example shows another authorization method - method **NO\_AUTHORIZATION**. This method represents simple confirmation of the order by clicking on confirmation button on the screen. As in example before we use **Immutable Signing Resources Reference**.
+
+```
+GET /banking/my/signable-resource/sign/2caf975faf9fbd7edb8c276abb6690ab30cf534d
+
+Response payload:
+{
+    "authorizationType": "NONE",
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "2caf975faf9fbd7edb8c276abb6690ab30cf534d"
+    }
+}
+```
+
+```
+POST /banking/my/signable-resource/sign/2caf975faf9fbd7edb8c276abb6690ab30cf534d
+
+Request payload:
+{
+    "authorizationType": "NONE"
+}
+
+Response payload:
+{
+    "authorizationType": "NONE",
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "2caf975faf9fbd7edb8c276abb6690ab30cf534d"
+    }
+}
+```
+
+```
+PUT /banking/my/signable-resource/sign/2caf975faf9fbd7edb8c276abb6690ab30cf534d
+
+Request payload:
+{
+    "authorizationType": "NONE"
+}
+
+Response payload:
+{
+    "signInfo": {
+        "state": "DONE",
+        "signId": "2caf975faf9fbd7edb8c276abb6690ab30cf534d"
+    }
+}
+```
+
+### Examples With One Scenario
+
+In this example we assume that the bank requires the signing process which consists of one scenario with more than one authorization method. For this example we use scenario with authorization methods **TAC** and **CASE\_MOBILE** and we use **Immutable Signing Resources Reference**.
+
+```
+GET /banking/my/signable-resource/sign/151112531008554
+
+Response payload:
+{
+    "authorizationType": "TAC",
+    "scenarios": [
+        [
+            "TAC",
+            "CASE_MOBILE"
+        ]
+    ],
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+
+`authorizationType` property now represents preferred method. Since there is only one scenario which starts with **TAC** method only this can be preferred method.
+In POST call we send TAC in `authorizationType` attribute to inform which method will be used (in this case we have no other option).
+
+```
+POST /banking/my/signable-resource/sign/151112531008554
+
+Request payload:
+{
+    "authorizationType": "TAC"
+}
+
+response:
+{
+    "authorizationType": "TAC",
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+
+Onetime password was sent to client again and it should be returned via PUT call.
+
+```
+PUT /banking/my/signable-resource/sign/151112531008554
+
+Request payload:
+{
+    "authorizationType": "TAC",
+    "oneTimePassword": "12345"
+}
+
+Response payload:
+{
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+Because this is not last authorization method in scenario (scenario wasn't finished) a `state` attribute value is **OPEN**, not DONE.
+
+Next we use following authorization method in scenario - **CASE\_MOBILE** method. This GET call is not neccessary.
+
+```
+GET /banking/my/signable-resource/sign/151112531008554
+
+Response payload:
+{
+    "authorizationType": "CASE_MOBILE",
+    "scenarios": [
+        [
+            "CASE_MOBILE"
+        ]
+    ],
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+As you can see there is TAC method missing in scenario. It was successfully accomplished and it is no longer needed to appear in scenario. By calling POST method we launch **CASE\_MOBILE** authorization method.
+
+```
+POST /banking/my/signable-resource/sign/151112531008554
+
+Request payload:
+{
+    "authorizationType": "CASE_MOBILE"
+}
+
+Response payload:
+{
+    "authorizationType": "CASE_MOBILE",
+    "challengeImage": "iHUIDFuihsfd8878sdfSDFsfd...",
+    "poll": {
+        "url": "/webapi/api/v1/banking/sign/poll/160527036796442",
+        "id": "160527036796442",
+        "interval": 5000
+    },
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+
+In case of **CASE\_MOBILE*** authorization method all information is sent to client application to visualize it for user. It is up to user to choose form of the method will be used.
+Polling process should be started at this point if **CASE\_MOBILE** authorization method is used. By calling given url you can check whether CASE\_MOBILE method was already finished externally (by using smartphone application - online form of CASE\_MOBILE).
+
+In this case it was really online form of the CASE\_MOBILE method which was used. If application frontend finds out that order was sucessfully authorized by mobile phone then frontend calls PUT resource without payload (only mandatory `authorizationType` is filled).
+
+```
+PUT /banking/my/signable-resource/sign/151112531008554
+
+Request payload:
+{
+    "authorizationType": "CASE_MOBILE"
+}
+
+Response payload:
+{
+    "signInfo": {
+        "state": "DONE",
+        "signId": "151112531008554"
+    }
+}
+```
+
+Because this is last authorization method in scenario a `state` attribute value is **DONE** (if order was successfully authorized).
+
+### Examples With Two or More Scenarios
+
+We assume that the bank offers two possible scenarios for the signing process. Every scenario contains more then one authorization method. In this example first scenario contains authorization methods **NO\_AUTHORIZATION** and **CASE\_MOBILE** and second scenario **TAC** and **CASE\_MOBILE**. For all examples in this section we use **Immutable Signing Resources Reference**.
+
+```
+GET /banking/my/signable-resource/sign/151112531008554
+
+Response payload:
+{
+    "authorizationType": "TAC",
+    "scenarios": [
+        [
+            "NONE",
+            "CASE_MOBILE"
+        ],
+        [
+            "TAC",
+            "CASE_MOBILE"
+        ]
+    ],
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+
+Preferred authorization method is TAC. Nevertheless user decides to use authorization method **NO\_AUTHORIZATION**. In POST call we send NO\_AUTHORIZATION in `authorizationType` attribute.
+
+```
+POST /banking/my/signable-resource/sign/151112531008554
+
+Request payload:
+{
+    "authorizationType": "NONE"
+}
+
+Response payload:
+{
+    "authorizationType": "NONE",
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+
+```
+PUT /banking/my/signable-resource/sign/151112531008554
+
+Request payload:
+{
+    "authorizationType": "NONE"
+}
+
+Response payload:
+{
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+
+Because this is not last authorization method in scenario a `state` attribute value is **OPEN**, not DONE.
+
+Next we will use following authorization method in scenario - **CASE\_MOBILE** method because we have no other option. If both scenarios had the same first method then user could choose second method according to the scenarios. In such a case `scenarios` field would contain two scenarios with the tail methods of everyone. But for now we have only one option so only one scenario is available in next GET call.
+
+```
+GET /banking/my/signable-resource/sign/151112531008554
+
+Response payload:
+{
+    "authorizationType": "CASE_MOBILE",
+    "scenarios": [
+        [
+            "CASE_MOBILE"
+        ]
+    ],
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+
+```
+POST /banking/my/signable-resource/sign/151112531008554
+
+Request payload:
+{
+    "authorizationType": "CASE_MOBILE"
+}
+
+Response payload:
+{
+    "authorizationType": "CASE_MOBILE",
+    "challengeImage": "iHUIDFuihsfd8878sdfSDFsfd...",
+    "poll": {
+        "url": "/webapi/api/v1/banking/sign/poll/160527036796442",
+        "id": "160527036796442",
+        "interval": 5000
+    },
+    "signInfo": {
+        "state": "OPEN",
+        "signId": "151112531008554"
+    }
+}
+```
+In case of **CASE\_MOBILE*** authorization method all information is sent to client application to visualize it for user. It is up to user to choose form of the method will be used.
+
+Polling process should be started at this point if **CASE\_MOBILE** authorization method is used. By calling given url you can check whether CASE\_MOBILE method was already finished externally (by using smartphone application - online form of CASE\_MOBILE).
+
+In this case QR form of the CASE\_MOBILE method will be used. The application frontend should retrieve onetime password generated by mobile application and send it back to bank via PUT signing call.
+
+```
+PUT /banking/my/signable-resource/sign/151112531008554
+
+Request payload:
+{
+    "authorizationType": "CASE_MOBILE",
+    "oneTimePassword": "123456"
+}
+
+
+Response payload:
+{
+    "signInfo": {
+        "state": "DONE",
+        "signId": "151112531008554"
+    }
+}
+```
+
+Because this is last authorization method in scenario a `state` attribute value is **DONE** (if order was successfully authorized).
+
+
+# Basic Data Types
+
+The individual call descriptions below reuse the following common data types. If a datatype has a maximum length, the length is appended to the datatype, e.g. (TEXT100). If a field has a minimum and a maximum, both values are given and separated via a minus, e.g. (TEXT6-32).
+
+If data types (see below) define error codes, those have to be returned whenever an object using such a field is POSTed. In addition, the following generic errors can occur:
+
+### Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 400 | FIELD\_MISSING | The mandatory field is missing in the JSON input or value is empty. |
+| 400 | FIELD\_INVALID | The value of the field is not valid. |
+| 400 | FIELD\_TOO\_LONG | The field maximum length has been exceeded. |
+| 400 | FIELD\_TOO\_SHORT | The field minimum length has not been reached. |
+
+If one check fails, a HTTP 403 plus an error object is returned, with the `scope` defining the source/field of the error.
+
+## Account Number (ACCOUNTNO)
+
+Account number comes in two flavors
+* IBAN (IBAN plus optional BIC) identification
+* local account number (BBAN) plus mandatory bank code plus optional country code (in case iban is available along with the local account number optional fields cz-iban and cz-bic are provided)
+
+This is due to fact, that using of IBAN format was not adopted in all the Erste group countries. Some applications of ACCOUNTNO are restricted to one of the two flavors only. F.i. when posting new SEPA payment orders sender and receiver accounts must be specified by IBAN format only, or when posting new Domestic payment in CSAS BBAN format should be used. However when requesting existing transactions the receiver account may be returned in format BBAN or IBAN (for SEPA payments). Therefore the ACCOUNTNO object may in some cases only contain IBAN, only local BBAN, or both.
+
+IBAN version:
+
+| Attribute | Type | Description |
+| ------ | ------ | ------ |
+| iban | IBAN | IBAN |
+| bic | BIC | BIC |
+
+BBAN version:
+
+| Attribute | Type | Description |
+| ------ | ------ | ------ |
+| number | TEXT | Account number with possible prefix. Format is "XXXXXX-NNNNNNNNNN" if prefix is not null or "000000". If prefix is not provided then format is "NNNNNNNNNN" without leading zeros. |
+| bankCode | BANKCODE | Bank Code |
+| countryCode | COUNTRYCODE | Code of the Country - 2 characters; mandatoryfor international orders. |
+| cz-iban | IBAN | IBAN (field used only for output) |
+| cz-bic | BIC | BIC (field used only for output) |
+
+Account attribute `number` is not padded with zeros. On the other hand `bankCode` is. Account attribute `number` in consists of optional account prefix (TEXT6) and account number (TEXT10) and format is "XXXXXX-NNNNNNNNNN" if prefix is not null or "000000". If prefix is not provided then format is "NNNNNNNNNN" without leading zeros.
+
+## Amount (AMOUNT)
+
+Amounts are objects that include the value, the precision and the currency.
+
+When AMOUNT is used as input value, maximum expected precision depends on currency.
+
+| Currency | Max. precision |
+| ------ | ------ |
+| JPY | 0 |
+| TND | 3 |
+| default | 2 |
+
+If other restriction is used for given resource it would be stated in it's description.
+
+| Attribute | Type | Description |
+| ------ | ------ | ------ |
+| value | NUMBER | Value of an amount. Number without decimal part. |
+| precision | NUMBER | Precision of the amount. How many digits from value fields should be considered to be decimal. |
+| currency | CURRENCY | Currency of the amount. |
+
+Example:
+
+```
+"amountExample" : {
+    "value":12345678900,
+    "precision":2,
+    "currency":"EUR"
+}
+```
+
+Also, "currency" has to be checked according to (CURRENCY) rules.
+
+### Checks & Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 400 | INVALID\_PRECISION | Precision not an integer or not in allowed range. |
+
+## Array (ARRAY)
+
+Represents a collection of elements/items.
+
+Example:
+
+```
+{
+    "field",
+    "arrayName": [
+        { ...item... },
+        { ...item... },
+        { ...item... }
+    ],
+    "field"
+}
+```
+
+## Bank Code (BANKCODE)
+
+Local bank code used in local bank clearing system, e.g. 5-digit bank code in AT, 4-digit bank code in CZ, SK.
+
+```
+"bankCode": "20111"     //Erste Bank der oesterreichischen Sparkassen AG
+"bankCode": "0800"      //ďż˝eskďż˝ spoďż˝itelna, a.s.
+"bankCode": "0900"      //Slovenskďż˝ sporiteďż˝ďż˝a, a.s.
+```
+
+## Boolean (BOOLEAN)
+
+Logical data type with two values: **true** or **false**.
+
+## Business Identifier Code (BIC)
+
+BIC code (also know as SWIFT ID/code) standard format (based on **ISO 9362**) has 8 or 11 characters, made up of:
+
+* 4 letters: Institution Code or bank code
+* 2 letters: ISO 3166-1 alpha-2 country code
+* 2 letters or digits: location code
+* 3 letters or digits: branch code, optional (possible default 'XXX' for primary office)
+
+Example:
+
+```
+"bic": "GIBACZPX"
+```
+
+### Checks & Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 400 | BIC\_INVALID | The given BIC is not syntactically correct. |
+
+## Country Code (COUNTRYCODE)
+
+Country codes are in **ISO 3166-1** format, subtype ALPHA-2. This means two letters in uppercase.
+
+Example:
+
+```
+{
+    "country":"AT"
+}
+```
+
+### Checks & Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 400 | COUNTRY\_CODE\_UNKNOWN | Not an ISO 3166 country code. |
+
+## Currency (CURRENCY)
+
+Currency is in **ISO 4217** format (3 capital letters code).
+
+Example:
+
+```
+{
+    "currency":"EUR"
+}
+```
+
+### Checks & Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 400 | CURRENCY\_UNKNOWN | Not an ISO 4217 currency. |
+
+## Date (DATE)
+
+Date format without time (yyyy-MM-dd).
+
+```
+{
+    "aDate":"2011-07-14"
+}
+```
+
+## Date and time (DATETIME)
+
+Dates are returned as **ISO 8601** dates and are used for both dates, times and timestamps. Using timezones is mandatory.
+
+```
+{
+    "aDate":"2011-07-14T19:43:37+0100",
+    "yetAnotherDate":"2001-10-26T19:32:52Z"
+}
+```
+
+All dates returned by the API are in the corresponding time zone a record/data object is for. For Czech dates (e.g. transfer timestamps) this means Central European Standard Time (CEST). Czech republic is UTC+1 in winter and UTC+2 in summer, so times usually read `+0100` or `+0200`. Should, at a later time, the API be applied to other countries, the corresponding time zone for a given data object has to be used.
+
+**Note:** *Returning dates as UTC is discouraged because a client would not know what the intended target time zone is that a date has to be displayed in (e.g. a Czech transaction still has to be shown with the correct Czech execution time, even if the caller is using the API from e.g. the USA.)*
+
+All dates provided by the client (e.g. a date for a future payment order) can be in any timezone. They will be converted to CEST on the server and this CEST version is used for all further processing - including storing or returning this now converted date to the client.
+
+## Enum (ENUM)
+
+Variables where the actual value is one of a predefined list (a.k.a. enums). The range of values are given as comma-separated list right in the datatype definition, e.g. (ENUM:GI,WP,SP,KA). Domain values are keys used in sIT's internal Domain Database, that provides company-wide reusable keys, short- and longtexts for them.
+
+```
+"some_domain_value":"SP"
+```
+
+### Checks & Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 400 | ENUM\_UNKNOWN | Given element is not part of this (ENUM). |
+
+## Flag (FLAG)
+
+Flags/Tags/Roles that an object can have. To avoid adding a lot of case-specific boolean values, things that an object is nor not is are represented by flagging the object. Flags are an array of strings representing one aspect, e.g. one permission, one attribute or one role. The existence of a certain string in a Flag-List can be considered to be a "true" on this aspect, the absence of a certain string as a "false". The possible flags are listed on a case-by-case basis at each data type/call as comma-separated list within the brackets.
+
+```
+"flags": [
+    "hidden", "transactionsHidden"
+]
+```
+
+Empty flag arrays can be omitted.
+
+### Checks & Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 400 | FLAG\_UNKNOWN | Given element is not possible/allowed as (FLAG). |
+
+## Hashes (HASH)
+
+All hashes are generated as **SHA256**.
+
+## International bank account numbers (IBAN)
+
+Based on **ISO 13616-1:2007**. A valid IBAN consists of all three of the following components:
+
+* Country Code (2 capital letters)
+* Check digits (2 digits)
+* BBAN (local Basic Bank Account Number consisting of 1-30 characters)
+
+```
+"iban": "CZ172099900000005603"
+```
+## Number (NUMBER)
+
+Number is in format based on JSON number specification. Number can be positive or negative, integer or decimal.
+
+Example: (NUMBER4)
+
+```
+{
+    "institute": 188
+}
+```
+
+### Checks & Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 400 | NUMBER\_INVALID | Not a string only consisting of digits. Not the correct length. |
+
+
+## Sign Info (SIGNINFO)
+
+Represents signing information for the requested order.
+
+```
+{
+    "state": (ENUM:OPEN,NONE,BLOCKED), // OPEN: The order should be signed. NONE: The order has been executed without signing. BLOCKED: Current user can't sign the order (f.e. insufficient rights).
+    "signId": (STAMP24ID),             // Available when state is OPEN. Used for next signing calls.
+    "hash": (TEXT)                     // Available when state is OPEN. Hash value for signing calls.
+}
+```
+
+## Sign Info Extended (SIGNINFOEX)
+
+Represents signing information for the requested order containing additional information about the current exchange rate and the conversion of the amount according to this exchange rate.
+
+```
+{
+    "state": (ENUM:OPEN,NONE,BLOCKED), // OPEN: The order should be signed. NONE: The order has been executed without signing. BLOCKED: Current user can't sign the order (f.e. insufficient rights).
+    "signId": (STAMP24ID),      // Available when state is OPEN. Used for next signing calls.
+    "exchangeRate": (TEXT), // Current exchange rate.
+    "equivalentAmount": (AMOUNT) // Indicative conversion of the amount according to the exchange rate. This is the amount by which the account balance will be reduced and the currency of this amount is the same as the account currency.
+}
+```
+
+## Text (TEXT)
+
+Text is given in UTF-8 encoding. All text fields and types derived from TEXT are validated against set of allowed characters:
+
+```
+"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ĹĽďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ďż˝ÝŽ,.;:!?@&+-*/()_#"
+```
+
+In the case there is any exception in this validation rule it will be noted.
+
+### Checks & Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 400 | TEXT\_INVALID | Not a string. |
+| 400 | CZ-FIELD\_CHARACTER\_NOT\_PERMITTED | The value specified contains forbidden character. |
+
+
+# Data Types
+
+## Payment
+
+Description of **payment** entity attributes:
+
+| Attribute | Type | Description |
+| ------ | ------ | ------ |
+| id | TEXT | Internal identifier of payment order. Note that after signing of the order the id could change. |
+| hash | HASH | Hash value calculated using common relevant payment order attributes to ensure the same unchanged logical object (payment order) every time during authorization signing process. |
+| referenceId | TEXT | Transaction reference ID (not a unique identifier, used by BE systems). Used to link payment order with transactions. |
+| orderCategory | ENUM | Payment order category determines whether payment is domestic, SEPA, international or inside the bank (domestic, but could be different processing) or between accounts of the same user (domestic, but with better fee policy). Possible values: DOMESTIC, OWN_TRANSFER, SEPA, INTERNATIONAL |
+| orderType | ENUM | Payment order type (outgoing payment, outgoing direct debit, incoming direct debit) determines further transaction processing in BE. Values: PAYMENT\_OUT, DIRECT\_DEBIT\_IN |
+| senderName | TEXT | sender name |
+| sender | ACCOUNTNO | sender account number. |
+| receiverName | TEXT | receiver name |
+| receiver | IBAN | Receiver IBAN in case of international payments. |
+| receiver | ACCOUNTNO | receiver account number. |
+| amount | AMOUNT | payment amount |
+| additionalInfo.text4x35 | ARRAY | Message for payee set during payment order creation. It is used to identify transaction on receiver side. Array of texts 4x35 |
+| senderReference| TEXT | Message for me set during payment order creation. |
+| executionDate | DATETIME | Datetime when payment order was created/updated (the last time) by user (read-only field is automatically setup/changed by BE system based on POST request) |
+| transferDate | DATE | payment transfer date |
+| expirationDate | DATETIME | Datetime till when payment order will be repeated on BE in the case of insufficient funds on account. |
+| modificationDate | DATETIME | Modification date indicates the last update of payment order done by user or BE system (read-only field provided by BE) |
+| cz-orderingDate | DATETIME | Date and time which should be used for default ordering of the payment orders for display. |
+| applicationId | ENUM | ID of the application via which this payment order was entered/modified the last time. Possible values: GEORGE, GEORGE_GO, DONATION, BUSINESS24, ATM_PAYMENT, ATM_OTHER, GSM, BRANCH_FE, POST_OFFICE, INTERNET_BANKING, TELEPHONE_BANKER and VIDEO_BANKER. |
+| channelId | ENUM | ID of the channel via which this payment order was entered/modified the last time. Possible values: NET_BANKING, ATM, MOBILE_BANKING, BRANCH, POST_OFFICE, CALL_CENTRE and VIDEO_BANKING. |
+| state | ENUM | Status of the payment order (details above). Possible values: OPEN - payment waits for signing, SPOOLED - payment is signed and waits for execution, CLOSED - executed, FAILED - rejected by bank. |
+| stateDetail | ENUM | State detail of payment order. For list of possible values see table below. |
+| stateOk | BOOLEAN | Indicator whether state (stateDetail value) of payment order is OK from user point of view. For mapping between stateDetail and stateOk indicator values see table below. |
+| cz-description | TEXT | description of payment order, transaction type |
+| symbols.variableSymbol | TEXT | variable symbol |
+| symbols.constantSymbol | TEXT | constant symbol |
+| symbols.specificSymbol | TEXT | specific symbol |
+| receiverAddress | ARRAY | Receiver's address. Array of 3x text fields with max 35 characters each. First text - Street, Second text - ZIP code and City, Third text - Country code, name. (Used only for International payments) |
+| flags | ARRAY | Array of optional Flag values depends on Payment order category, type. |
+
+Possible stateDetail values used to display relevant status info in FE are defined in following table (local API spec should define mapping to BE technical statuses):
+
+| stateDetail | Meaning | StateOk |
+| ------ | ------ |------ |
+| OPN | Open - not signed yet. | true |
+| NGD | Insufficient funds - no disposable balance. Payment waits for funds. If funds are not transfered to source account it is cancelled after certain time (3-5 days - depends on account type). | false |
+| WER | Waiting for exchange rate. Bank is currently recalculating exchange rates. | true |
+| TRM | Marked as scheduled payment. Payment waits for transfer date. | true |
+| PNR | Payment Order from night register. | true |
+| FIN | Executed - finalized neutral. | true |
+| FIH | Executed - finalized today (current bankday) | true |
+| ABG | Rejected - rejected by bank. For more information about reason client should ask his bank advisor. | true |
+| INB | Being processed - in process. | true |
+
+API Mapping of stateDetail values to state values is in following table (local API spec could define mapping to BE technical status):
+
+| stateDetail | Meaning |
+| ------ | ------ |
+| OPEN | Order is created and can be edited. It won't be executed if wouldn't be signed. |
+| SPOOLED | Order is prepared to be executed. It waits till all conditions are met (date, balance, etc.). |
+| CLOSED | Order is closed. Was executed or rejected by bank. No further action will be issued. |
+
+Possible flags:
+
+| Flag | Description |
+| ------ | ------ |
+| urgent | Flag indicating urgent payment order (in SEPA, SWIFT and maybe also in local bank clearing systems) requested by client. |
+| editable | Flag indicating if payment order can be edited by current user. |
+| deletable | Flag indicating if payment order can be deleted by current user. |
+| cancelable | Flag indicating if future dated (already signed) payment order can be canceled by currnet user. For now, not avilable for foreign and SEPA transactions. |
+| redoable | Flag indicating if payment order can be re-done by current user. |
+
+
+## Payment Domestic
+
+Description of **payment domestic** entity attributes:
+
+| Attribute | Type | Description |
+| ------ | ------ | ------ |
+| id | TEXT | Internal identifier of payment order. Note that after signing of the order the id could change. |
+| orderCategory | ENUM | Payment order category determines whether payment is domestic, SEPA, international or inside the bank or between accounts of the same user. Possible values: DOMESTIC, SEPA, INTERNATIONAL, OWN\_TRANSFER (should be used instead of flags in current George AT), maybe INTRA\_BANK. |
+| orderType | ENUM | Payment order type. Possible values: PAYMENT\_OUT (default value), DIRECT\_DEBIT\_OUT (not used so far), DIRECT\_DEBIT\_IN (incoming DD from partner's account bank) |
+| senderName | TEXT | Name of the transferor |
+| sender | ACCOUNTNO | Account number of transferor. |
+| receiverName | TEXT | Name of the payee |
+| receiver | ACCOUNTNO | Account number of payee |
+| amount | AMOUNT | Payment order amount. Minimum is 0.1 CZK, maximum possible amount is 10 000 000 000 CZK or equivalent in foreign currency. |
+| transferDate | DATE | Optional date (in the future) when this payment has to be done |
+| modificationDate | DATETIME | Modification date indicates the last update of payment order done by user or BE system (read-only field provided by BE) |
+| cz-orderingDate | DATETIME | Date and time which should be used for default ordering of the payment orders for display. |
+| additionalInfo.text4x35 | ARRAY | Message for payee set during payment order creation. It is used to identify transaction on receiver side. Array of texts 4x35 |
+| senderReference| TEXT | Message for me set during payment order creation. |
+| symbols.variableSymbol | TEXT | Payment variable symbol |
+| symbols.constantSymbol | TEXT | Payment constant symbol |
+| symbols.specificSymbol | TEXT | Payment specific symbol |
+| state | ENUM | State of payment order |
+| stateDetail | ENUM | State detail of payment order |
+| stateOk | BOOLEAN | Indicator whether state (stateDetail value) of payment order is OK from user point of view. For mapping between stateDetail and stateOk indicator values see table for stateDetail in Payment-object description. |
+| channelId | ENUM | ID of the channel via which this payment order was entered/modified the last time. (This channel ID could be used for filtering in payment list in future). Possible values: NET_BANKING, ATM, MOBILE_BANKING, BRANCH, POST_OFFICE, CALL_CENTRE and VIDEO_BANKING. |
+| applicationId | ENUM | ID of the application via which this payment order was entered/modified the last time. (This application ID could be used for filtering in payment list in future). Possible values: GEORGE, GEORGE_GO, DONATION, BUSINESS24, ATM_PAYMENT, ATM_OTHER, GSM, BRANCH_FE, POST_OFFICE, INTERNET_BANKING, TELEPHONE_BANKER and VIDEO_BANKER. |
+| flags | ARRAY | Array of optional Flag values depends on Payment order category, type. |
+
+Possible flags:
+
+| Flag | Description |
+| ------ | ------ |
+| urgent | Flag indicating urgent payment order is requested by client. There are several limitations for urgent payments. It is possible only on current day only until 14:00 and only for working days. Receiver must be account held outside CSAS and amount must be in CZK. |
+
+## Payment International
+
+Description of **payment international** entity attributes:
+
+| Attribute | Type | Description |
+| ------ | ------ | ------ |
+| id | TEXT | Internal identifier of payment order. Note that after signing of the order the id could change. |
+| referenceId | TEXT | Transaction reference ID provided by BE. |
+| orderCategory | ENUM | Possible values: DOMESTIC, SEPA, INTERNATIONAL, OWN_TRANSFER. |
+| orderType | ENUM | Payment order type, determines further transaction processing in BE. Possible values: PAYMENT_OUT, DIRECT_DEBIT_OUT. |
+| state | ENUM | Status of the payment order. Possible values OPEN - payment waits for signing, SPOOLED - payment is signed and waits for execution, CLOSED - executed, FAILED - rejected by bank. |
+| stateDetail | ENUM | Detail state of payment order. For list of possible values see table in Payment object description. |
+| stateOk | BOOLEAN | Indicator whether state (stateDetail value) of payment order is OK from user perspective. For mapping between stateDetail and stateOk see table in Payment object description. |
+| sender | ACCOUNTNO | Account number of the sender. |
+| senderName | TEXT | Name of sender, who created payment order. |
+| receiver | ACCOUNTNO | Account number of the receiver. IBAN with optional BIC or local account number with mandatory local bank code). |
+| receiverName | TEXT | Name of receiver of payment order. |
+| amount | AMOUNT | Payment amount. |
+| receiverBankName | TEXT | Receiver's bank name of receiver's account, where payment order is transferred to. Used only for international payments. |
+| receiverBankAddress | ARRAY | Receiver's bank address. Array of 3x text fields with max 35 characters each. First text - Street, Second text - ZIP code, third one - Country code, name. |
+| transferDate | DATE | Requested due date entered by user. Date when payment order will be transferred from sender account. |
+| additionalInfo.text4x35 | ARRAY | Message for payee set during payment order creation. It is used to identify transaction on receiver side. Array of texts 4x35. |
+| additionalInfo.paymentReference | TEXT | Payment reference used to identify payment order on receiver side. |
+| feeSharingCode | ENUM | Transfer Fee sharing code. Possible values : OUR, SHA, BEN. |
+| senderAddress | ARRAY | Sender's address. Array of 3x text fields with max 35 characters each. First text - Street, Second text - ZIP code, third one - Country code, name. |
+| receiverAddress | ARRAY | Receiver's address. Array of 3x text fields with max 35 characters each. First text - Street, Second text - ZIP code, third one - Country code, name. |
+| channelId | ENUM | ID of the channel via which this payment order was entered/modified the last time. ENUM : [NET_BANKING, ATM, MOBILE_BANKING, BRANCH, POST_OFFICE, CALL_CENTRE, VIDEO_BANKING]. |
+| applicationId | ENUM | ID of the application via which this payment order was entered/modified the last time. ENUM : [GEORGE, GEORGE_GO, DONATION, BUSINESS24, ATM_PAYMENT, ATM_OTHER, GSM, BRANCH_FE, POST_OFFICE, INTERNET_BANKING, TELEPHONE_BANKER, VIDEO_BANKER]. |
+| flags | ARRAY | Array of optional flag values depends on Payment order category, type. |
+
+Possible flags:
+
+| Flag | Description |
+| ------ | ------ |
+| urgent | Flag indicating urgent payment order is requested by client. |
+| individualConditions | Flag indicating individual conditions for international payment (and SEPA payment for countries with local currency different than EUR) order requested by client. |
+
+
+## Payment Sepa
+
+Description of **payment sepa** entity attributes:
+
+| Attribute | Type | Description |
+| ------ | ------ | ------ |
+| id | TEXT | Internal identifier of payment order. Note that after signing of the order the id could change. |
+| referenceId | TEXT | Transaction reference ID provided by BE. |
+| orderCategory | ENUM | Possible values: DOMESTIC, SEPA, INTERNATIONAL, OWN_TRANSFER. Expected SEPA. |
+| orderType | ENUM | Payment order type, determines further transaction processing in BE. Possible values: PAYMENT_OUT, DIRECT_DEBIT_OUT. |
+| state | ENUM | Status of the payment order. Possible values OPEN - payment waits for signing, SPOOLED - payment is signed and waits for execution, CLOSED - executed, FAILED - rejected by bank. |
+| stateDetail | ENUM | Detail state of payment order. For list of possible values see table in Payment object description. |
+| stateOk | BOOLEAN | Indicator whether state (stateDetail value) of payment order is OK from user perspective. For mapping between stateDetail and stateOk see table in Payment object description. |
+| sender | ACCOUNTNO | Account number of the sender. IBAN format only. |
+| senderName | TEXT | Name of sender, who created payment order. |
+| receiver | ACCOUNTNO | Account number of the receiver. IBAN format only. |
+| receiverName | TEXT | Name of receiver of payment order. |
+| amount | AMOUNT | Payment amount in EUR (for SEPA Payments). |
+| transferDate | DATE | Requested due date entered by user. Date when payment order will be transferred from sender account. |
+| additionalInfo.text4x35 | ARRAY | Message for payee set during payment order creation. It is used to identify transaction on receiver side. Array of texts 4x35. |
+| additionalInfo.paymentReference | TEXT | Payment reference used to identify payment order on receiver side. Used only for SEPA payments. |
+| feeSharingCode | ENUM | Transfer Fee sharing code. Default value for SEPA payments - SHA - Transfer fee is shared by both. |
+| senderAddress | ARRAY | Sender's address. Array of 3x text fields with max 35 characters each. First text - Street, Second text - ZIP code, third one - Country code, name. |
+| receiverAddress | ARRAY | Receiver's address. Array of 3x text fields with max 35 characters each. First text - Street, Second text - ZIP code, third one - Country code, name. |
+| cz-symbols.variableSymbol | TEXT | Payment variable symbol. |
+| cz-symbols.constantSymbol | TEXT | Payment constant symbol. |
+| cz-symbols.specificSymbol | TEXT | Payment specific symbol. |
+| channelId | ENUM | ID of the channel via which this payment order was entered/modified the last time. ENUM : [NET_BANKING, ATM, MOBILE_BANKING, BRANCH, POST_OFFICE, CALL_CENTRE, VIDEO_BANKING]. |
+| applicationId | ENUM | ID of the application via which this payment order was entered/modified the last time. ENUM : [GEORGE, GEORGE_GO, DONATION, BUSINESS24, ATM_PAYMENT, ATM_OTHER, GSM, BRANCH_FE, POST_OFFICE, INTERNET_BANKING, TELEPHONE_BANKER, VIDEO_BANKER]. |
+| flags | ARRAY | Array of optional flag values depends on Payment order category, type. |
+
+Possible flags:
+
+| Flag | Description |
+| ------ | ------ |
+| urgent | Flag indicating urgent payment order is requested by client. |
+| individualConditions | Flag indicating individual conditions for international payment (and SEPA payment for countries with local currency different than EUR) order requested by client. |
+
+# Group Payment Orders
+
+
+## Domestic Payment Orders [/payments/domestic]
+
+### Create Domestic Payment Order [POST]
+
+Resource for creating domestic payment order.
+
+
+* Paginated &#10006;
+
+* Sortable &#10006;
+
+* Signable &#10004;
+
+#### Flags/Features Requirements
+
+| Entity  | Flag/Feature            | Description |
+| ------- | ----------------------- | ----------- |
+| account | ownTransferAllowed      | It is possible to create domestic payment to account of the current user if account identified by sender attribute does have flag. |
+| account | domesticTransferAllowed | It is possible to create domestic payment if account identified by sender attribute does have flag. |
+| account | urgentTransferAllowed   | It is possible to create urgent domestic payment if account identified by sender attribute does have flag. |
+
+#### Request Fields
+
+| Attribute | General |
+| ------ | ------ |
+| senderName | m |
+| sender | m |
+| sender.cz-iban | o |
+| sender.cz-bic | o |
+| sender.number | m |
+| sender.bankCode | m |
+| sender.countryCode | o |
+| receiverName | m |
+| receiver | m |
+| receiver.cz-iban | o |
+| receiver.cz-bic | o |
+| receiver.number | m |
+| receiver.bankCode | m |
+| receiver.countryCode | o |
+| amount | m |
+| amount.value | m |
+| amount.precision | m |
+| amount.currency | m |
+| transferDate | o |
+| additionalInfo | o |
+| additionalInfo.text4x35 | o |
+| senderReference | o |
+| symbols | o |
+| symbols.variableSymbol | o |
+| symbols.constantSymbol | o |
+| symbols.specificSymbol | o |
+| flags | o |
+
+**Note:** *If transferDate is not set in request it will be calculated by business logic and the nearest possible transferDate is delivered in the response.*
+
+**Note:** *If sender.iban or receiver.iban is filled, then bic is optional. If sender.number or receiver.number is filled, then bankCode is mandatory.*
+
+#### Response Fields
+
+| Attribute | General |
+| ------ | ------ |
+| id | m |
+| referenceId | m |
+| orderCategory | m |
+| orderType | m |
+| senderName | m |
+| sender | m |
+| sender.cz-iban | o |
+| sender.cz-bic | o |
+| sender.number | m |
+| sender.bankCode | m |
+| sender.countryCode | o |
+| receiverName | m |
+| receiver | m |
+| receiver.cz-iban | o |
+| receiver.cz-bic | o |
+| receiver.number | m |
+| receiver.bankCode | m |
+| receiver.countryCode | o |
+| amount | m |
+| amount.value | m |
+| amount.precision | m |
+| amount.currency | m |
+| modificationDate | o |
+| transferDate | o |
+| cz-orderingDate | m |
+| additionalInfo | o |
+| additionalInfo.text4x35 | o |
+| senderReference | o |
+| symbols | o |
+| symbols.variableSymbol | o |
+| symbols.constantSymbol | o |
+| symbols.specificSymbol | o |
+| state | m |
+| stateDetail | o |
+| stateOk | m |
+| channelId | o |
+| applicationId | o |
+| flags | o |
+| signInfo | m |
+| signInfo.state | m |
+| signInfo.signId | o |
+| signInfo.exchangeRate | o |
+| signInfo.equivalentAmount | o |
+| signInfo.equivalentAmount.value | m |
+| signInfo.equivalentAmount.precision | m |
+| signInfo.equivalentAmount.currency | m |
+
+**Note:** *If the payment order is in a currency other than the account currency, then Sign Info Extended is used. [Sign Info Extended](https://signingpremiumv1.docs.apiary.io/#introduction/basic-data-types/sign-info-extended-(signinfoex))*
+
+#### Error Codes
+
+| HTTP Status Code | Error Code                                   | Purpose |
+| ---------------- | -------------------------------------------- | ------- |
+| 400              | CZ-MAXIMUM\_AMOUNT                           | Specified amount is too high. |
+| 400              | CZ-MINIMUM\_AMOUNT                           | Specified amount is too low. |
+| 400              | CZ-TOO\_MANY\_DECIMAL\_PLACES                | Number of decimal places exceeded. |
+| 400              | ORDER\_NOT\_POSSIBLE                         | Payment order deliveration is not possible. |
+| 400              | FIELD\_INVALID\_TOO\_FAR\_IN\_FUTURE         | Date is too far in the future. |
+| 400              | CZ-EP\_INVALID\_TIME                         | Time is up for urgent payment. |
+| 400              | CZ-EP\_INVALID\_DUE\_DATE                    | Only current due date is possible for urgent payment. |
+| 400              | CZ-EP\_INVALID\_RECEIVER                     | Urgent payment can be entered only to an account held outside CSAS. |
+| 400              | CZ-EP\_INVALID\_CURRENCY\_NOT\_CZK           | Non-allowed currency for urgent payment. |
+| 400              | RECEIVER\_NOT\_ALLOWED                       | Transfer to the account is not allowed. (Multiple reasons: not paired to savings account, is summary account, ...) |
+| 400              | CZ-WITHDRAWALS\_MAXIMUM\_NUMBER\_EXCEEDED    | The maximum number of permitted non-penalised withdrawals from deposit account has been used up. |
+| 400              | CZ-INVALID\_WITHDRAWAL\_DUE\_DATE            | Withdrawal due date cannot be in next revolving period. |
+| 400              | CZ-WITHDRAWAL\_DUE\_DATE\_ONLY\_TODAY        | Withdrawal outside period for withdrawal can be planned only on today (future payments are not allowed). |
+| 400              | CZ-WITHDRAWALS\_LIMIT\_EXCEEDED              | Withdrawal amount exceed withdrawal limit for the overlimit withdrawal (withdrawal outside revolving date). |
+| 400              | CZ-MONEYBOX\_INVALID\_FIELD                  | It is possible to enter a payment from the savings account only to that personal account for which the savings account has been opened. (Transfer to moneybox is possible only from superior account.) |
+| 400              | CZ-GIRO\_ACCOUNT\_CURRENCY\_NOT\_CZK         | Transfer to giro accounts is allowed only in CZK. |
+| 400              | CZ-FOREIGN\_CURRENCY\_OUTSIDE\_CSAS          | Foreign currency transfer outside CSAS is not allowed |
+| 400              | INVALID\_PRECISION                           | This precision is not supported for given currency. |
+| 400              | CZ-EXTRA\_SAVING\_MAXIMUM\_EXCEEDED          | Sum of payments exceeds maximum allowed savings for current month. |
+| 400              | CZ-EXTRA\_SAVING\_MONTHLY\_MAXIMUM\_EXCEEDED | This payment amount exceeds total allowed savings for any month in future. |
+| 400              | CZ-MINIMUM\_BALANCE\_REQUIRED                | There is minimum amount required to keep in the account after transfer.  |
+| 400              | RECEIVER\_SAME\_AS\_SENDER                   | Receiver and sender accounts cannot be the same. |
+| 400              | appId\_not\_found                            | Record does not exist|
+| 400              | DATE\_INVALID                                | Time information is entered incorrectly. .|
+| 400              | CONFIRMATION\_EMAIL\_DIFFERENCE              | Confirmation email is different from email in confirmations database|
+| 400              | TOO\_MANY\_CONFIRMATIONS                     | Too many confirmations. Maximum is 1.|
+| 400              | CZ-CONFIRMATION\_NOT\_SUPPORTED              | Confirmation is not supported for product.|
+| 400              | CZ-FIELD\_CHARACTER\_NOT\_PERMITTED          | Not permitted character for reciever, sender names or for sender or receiver messages |
+| 400              | AC01                                         | Incorrect account number format - account is not allowed to use in nonbanking applications |
+| 400              | AG01                                         | Forbidden transaction for this account type - account is not set to use in nonbanking applications |
+
+
++ Request MSON (application/json)
+    + Headers
+
+            WEB-API-key: dd3c4d08-6c39-411a-a37d-0fbea365fc1e
+            Authorization: Bearer tg048
+
+    + Attributes (DOMESTIC PAYMENT request)
+
+
++ Response 200 (application/json)
+
+    + Attributes (DOMESTIC PAYMENT response)
+        
+
+
+## Sepa Payment Orders [/payments/sepa]
+
+### Create Sepa Payment Order [POST]
+
+Resource for creating sepa payment order.
+
+
+* Paginated &#10006;
+
+* Sortable &#10006;
+
+* Signable &#10004;
+
+#### Request Fields
+
+| Attribute | General |
+| ------ | ------ |
+| sender | m |
+| sender.iban | m |
+| receiverName | m |
+| receiver | m |
+| receiver.iban | m |
+| receiverAddress | m |
+| amount | m |
+| amount.value | m |
+| amount.currency | m |
+| amount.precision | m |
+| additionalInfo | o |
+| additionalInfo.text4x35 o |
+| additionalInfo.paymentReference | o |
+| transferDate | m |
+| feeSharingCode | m |
+| cz-symbols | o |
+| cz-symbols.constantSymbol | o |
+| cz-symbols.specificSymbol | o |
+| cz-symbols.variableSymbol | o |
+| flags | o |
+
+#### Response Fields
+
+| Attribute | General |
+| ------ | ------ |
+| id | m |
+| orderCategory | m |
+| sender | m |
+| sender.iban | m |
+| sender.bic | o |
+| senderName | m |
+| receiver | m |
+| receiver.iban | m |
+| receiver.bic | m |
+| receiverName | m |
+| amount | m |
+| amount.value | m |
+| amount.currency | m |
+| amount.precision | m |
+| transferDate | m |
+| additionalInfo | o |
+| additionalInfo.text4x35 o |
+| additionalInfo.paymentReference | o |
+| feeSharingCode | m |
+| senderAddress | m |
+| receiverAddress | m |
+| cz-symbols | o |
+| cz-symbols.constantSymbol | o |
+| cz-symbols.specificSymbol | o |
+| cz-symbols.variableSymbol | o |
+| flags | o |
+| signInfo | m |
+| signInfo.state | m |
+| signInfo.signId | o |
+
+#### Error Codes
+
+| HTTP Status Code | Error Code                                   | Purpose |
+| ---------------- | -------------------------------------------- | ------- |
+| 400 | OPERATION\_NOT\_ALLOWED | Payment order not allowed. |
+| 400 | INVALID\_PRECISION | Number of decimal places exceeded. |
+| 400 | INVALID\_DATE | Time information is entered incorrectly. |
+| 400 | INVALID\_DATE\_IN\_PAST | Date in Past. |
+| 400 | FIELD\_INVALID\_TOO\_FAR\_IN\_FUTURE | Date is too far in the future. |
+| 400 | CATEGORY\_INVALID | Payment order does not belong to defined category (SEPA). |
+| 400 | TOKEN\_INVALID    | Invalid identifier to access |
+| 400 | RECEIVER\_SAME\_AS\_SENDER | Receiver and sender accounts cannot be the same. |
+| 400 | ORDER\_NOT\_POSSIBLE | Payment order deliveration is not possible. |
+| 400 | CONFIRMATION\_EMAIL\_DIFFERENCE | Confirmation email is different from email in confirmations database|
+| 400 | TOO\_MANY\_CONFIRMATIONS | Too many confirmations. Maximum is 1.|
+| 400 | CZ-CONFIRMATION\_NOT\_SUPPORTED | Confirmation is not supported for product.|
+| 400 | TOO\_MANY\_ITEMS | Too many text items in additionalInfo/text.|
+| 400 | AC01 | Incorrect account number format - account is not allowed to use in nonbanking applications |
+| 400 | AG01 | Forbidden transaction for this account type - account is not set to use in nonbanking applications |
+
+
++ Request MSON (application/json)
+    + Headers
+
+            WEB-API-key: dd3c4d08-6c39-411a-a37d-0fbea365fc1e
+            Authorization: Bearer tg048
+
+    + Attributes (SEPA PAYMENT request)
+
+
++ Response 200 (application/json)
+    + Attributes (SEPA PAYMENT response)
+
+
+## International Payment Orders [/payments/international]
+
+### Create International Payment Order [POST]
+
+Resource for creating international payment order.
+
+
+* Paginated &#10006;
+
+* Sortable &#10006;
+
+* Signable &#10004;
+
+
+#### Request Fields
+
+| Attribute | General |
+| ------ | ------ |
+| sender | m |
+| sender.iban | m |
+| receiverName | m |
+| receiver | m |
+| receiver.iban | o |
+| receiver.number | o |
+| receiver.bic | o |
+| receiver.bankCode | o |
+| receiverAddress | m |
+| receiverBankName | m |
+| receiverBankAddress | m |
+| amount | m |
+| amount.value | m |
+| amount.currency | m |
+| amount.precision | m |
+| additionalInfo | o |
+| additionalInfo.text4x35 o |
+| transferDate | m |
+| feeSharingCode | m |
+| flags | o |
+
+#### Response Fields
+
+| Attribute | General |
+| ------ | ------ |
+| id | m |
+| orderCategory | m |
+| sender | m |
+| sender.iban | m |
+| sender.bic | o |
+| senderName | m |
+| receiver | m |
+| receiver.iban | o |
+| receiver.number | o |
+| receiver.bic | o |
+| receiver.bankCode | o |
+| receiverName | m |
+| amount | m |
+| amount.value | m |
+| amount.currency | m |
+| amount.precision | m |
+| transferDate | m |
+| additionalInfo | o |
+| additionalInfo.text4x35 o |
+| feeSharingCode | m |
+| senderAddress | m |
+| receiverAddress | m |
+| receiverBankName | m |
+| receiverBankAddress | m |
+| flags | o |
+| signInfo | m |
+| signInfo.state | m |
+| signInfo.signId | o |
+
+#### Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ---------------- | ---------- | ------- |
+| 400 | OPERATION\_NOT\_ALLOWED | Payment order not allowed. |
+| 400 | INVALID\_PRECISION | Number of decimal places exceeded. |
+| 400 | INVALID\_DATE | Time information is entered incorrectly. |
+| 400 | INVALID\_DATE\_IN\_PAST | Date in Past. |
+| 400 | FIELD\_INVALID\_TOO\_FAR\_IN\_FUTURE | Date is too far in the future. |
+| 400 | CATEGORY\_INVALID | Payment order does not belong to defined category (INTERNATIONAL). |
+| 400 | TOKEN\_INVALID    | Invalid identifier to access |
+| 400 | RECEIVER\_SAME\_AS\_SENDER | Receiver and sender accounts cannot be the same. |
+| 400 | ORDER\_NOT\_POSSIBLE | Payment order deliveration is not possible. |
+| 400 | CONFIRMATION\_EMAIL\_DIFFERENCE | Confirmation email is different from email in confirmations database|
+| 400 | TOO\_MANY\_CONFIRMATIONS | Too many confirmations. Maximum is 1.|
+| 400 | CZ-CONFIRMATION\_NOT\_SUPPORTED | Confirmation is not supported for product.|
+| 400 | TOO\_MANY\_ITEMS | Too many text items in additionalInfo/text.|
+| 400 | AC01 | Incorrect account number format - account is not allowed to use in nonbanking applications |
+| 400 | AG01 | Forbidden transaction for this account type - account is not set to use in nonbanking applications |
+
+
++ Request (application/json)
+
+
+    + Headers
+
+            WEB-API-key: dd3c4d08-6c39-411a-a37d-0fbea365fc1e
+            Authorization: Bearer tg002
+
+    + Attributes (INTERNATIONAL PAYMENT1 request) 
+
+
++ Response 200 (application/json)
+
+    + Attributes (INTERNATIONAL PAYMENT1 response)
+    
++ Request (application/json)
+
+    + Headers
+
+            WEB-API-key: dd3c4d08-6c39-411a-a37d-0fbea365fc1e
+            Authorization: Bearer tg002
+
+    + Attributes (INTERNATIONAL PAYMENT2 request)
+
+
++ Response 200 (application/json)
+    + Attributes (INTERNATIONAL PAYMENT2 response)
+
+
+
+## Signing Immutable orders [/payments/{resourcePart}/sign/{signId}]
+
+Signing process has three steps **GET**, **POST**, **PUT**. Following chapters will describe consecutive signing steps GET, POST and PUT.
+
+### Signing - step 1 - GET [GET]
+
+First step is to obtain all information (allowed authorization methods, scenarios) to enable the client to sign this request identified by parameter **"signId"**.
+
+#### Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 404 | ID\_NOT\_FOUND | The provided signId doesn't exist. |
+| 400 | NOT\_SIGNABLE | The requested resource is in a state that can not be signed (either not yet ready, or already signed). |
+| 400 | AUTH\_LIMIT\_EXCEEDED | This resource can not be signed using selected authorization method right now as the (daily/transaction) limit for this method has been already reached. |
+| 400 | NO\_AUTH\_AVAILABLE | There is no authorization method available for this order. |
+| 400 | CZ-SIGN\_IN\_PROGRESS | There is already one sign process in progress. |
+
++ Parameters
+
+    + resourcePart: contacts (string, required) - Part of the url which defines resource which will be signed.
+    + signId: 151112531008554 (string, required) - Identifier of the order/request we are going to sign. Provided in response of active call as identificator of particular active order/request.
+
++ Request (application/json)
+
+    + Headers
+
+            WEB-API-key: dd3c4d08-6c39-411a-a37d-0fbea365fc1e
+            Authorization: Bearer tg048
+
++ Response 200 (application/json)
+
+    + Attributes (SIGN_IMMUTABLE_GET_RESPONSE)
+
+### Signing - step 2 - POST [POST]
+
+Second step to start real signing process. When the client is ready to do an actual signing, he selects authorization method (if more scenarios are available in GET response) then /sign/ endpoint is POSTed with chosen authorization method and serverside generation of challenge is done (generation of a TAC-SMS or send PUSH notification to Mobile application).
+
+#### Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 404 | ID\_NOT\_FOUND | The provided signId doesn't exist. |
+| 400 | NOT\_SIGNABLE | The requested resource is in a state that can not be signed (either not yet ready, or already signed). |
+| 400 | AUTH\_LIMIT\_EXCEEDED | This resource can not be signed using selected authorization method right now as the (daily/transaction) limit for this method has been already reached. |
+| 400 | NO\_AUTH\_AVAILABLE | There is no authorization method available for this order. |
+| 400 | OTP\_NOT\_PROVIDED | OTP could not be provided due to local technical issues. |
+| 400 | OTP\_REQUEST\_NOT\_ALLOWED | Request for new OTP is not allowed, because previous generated OTP is still valid and there is restricted time slot before generation of the next OTP. |
+| 400 | CZ-SIGN\_IN\_PROGRESS | There is already one sign process in progress. |
+| 400 | AUTH\_METHOD\_LOCKED | Authorization method is locked due to all user allowed attempts to enter valid OTP failed. User can start signing again and select other authorization method. |
+
++ Parameters
+
+    + resourcePart: contacts (string, required) - Part of the url which defines resource which will be signed.
+    + signId: 151112531008554 (string, required) - Identifier of the order/request we are going to sign. Provided in response of active call as identificator of particular active order/request.
+
++ Request (application/json)
+
+    + Headers
+
+            WEB-API-key: dd3c4d08-6c39-411a-a37d-0fbea365fc1e
+            Authorization: Bearer tg048
+
+    + Attributes (SIGN_IMMUTABLE_POST_REQUEST)
+
++ Response 200 (application/json)
+
+    + Attributes (SIGN_IMMUTABLE_POST_RESPONSE)
+
+### Signing - step 3 - PUT [PUT]
+
+Third step to confirm signing process. The PUT call finalizes a previous POST request. The client provides the proper onetime password (OTP) to confirm authorization, it means to enter received SMS or generated code by mobile App and sent it to BE system for validation.
+
+If the authorization check is OK, the resource update/change is executed and the call returns a 200 HTTP code.
+
+If the signing fails error is returned with respective HTTP code.
+
+If the returned signInfo has still state "OPEN" then FE application should continue in signing process (repeat all 3 steps), because there is more authorization methods in signing chain for particular scenario.
+
+#### Error Codes
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 404 | ID\_NOT\_FOUND | The provided signId doesn't exist. |
+| 400 | OTP\_INVALID | The provided OTP is not valid for the given signId. |
+| 400 | OTP\_EXPIRED | The provided OTP has already expired for the given signId. |
+| 400 | ONE\_ATTEMPT\_LEFT | The previous OTPs were wrong, only one attempt remains. This code will be provided in addition to OTP\_INVALID. |
+| 400 | AUTH\_LIMIT\_EXCEEDED | This resource can not be signed using selected authorization method right now as the (daily/transaction) limit for this method has been already reached. |
+| 400 | AUTH\_METHOD\_LOCKED | Authorization method is locked due to all user allowed attempts to enter valid OTP failed. User can start signing again and select other authorization method. This code will be provided in addition to OPT_INVALID. |
+| 400 | NOT\_SIGNABLE | The requested resource is in a state that can not be signed (either not yet ready, or already signed). |
+| 400 | CZ-ORDER\_REFUSED | Signing process was successful but BE system refused to process order (validation error or something). |
+| 400 | CZ-ORDER\_DELIVERATION\_UNCERTAIN | Signing process was successful but BE haven't responded in time thus we do not know whether order was processed or not. |
+
+Specific Error Codes for signing a mobile payment.
+
+| HTTP Status Code | Error Code | Purpose |
+| ------ | ------ | ------ |
+| 404 | CZ-INSUFFICIENT\_BALANCE | Amount to be transferred is higher than current disposable balance on the account. |
+| 400 | CZ-PHONE\_NUMBER\_BLOCKED | Phone number is blocked. |
+| 400 | CZ-THIRD\_PARTY\_ERROR | Wrong interface. |
+| 400 | CZ-THIRD\_PARTY\_UNAVAILABLE | Decline due to other reasons. |
+| 400 | CZ-INVOICE\_PHONE\_NUMBER\_MISMATCH | Mismatch of invoice and phone number. |
+| 400 | LIMIT\_EXCEEDED | Daily limit reached. |
+| 400 | CZ-MONTHLY\_LIMIT\_EXCEEDED | Monthly limit reached. |
+| 400 | CZ-THIRD\_PARTY\_ERROR | Technical difficulties. |
+
++ Parameters
+
+    + resourcePart: contacts (string, required) - Part of the url which defines resource which will be signed.
+    + signId: 151112531008554 (string, required) - Identifier of the order/request we are signing. Provided in response of active call as identificator of particular active order/request.
+
++ Request (application/json)
+
+    + Headers
+
+            WEB-API-key: dd3c4d08-6c39-411a-a37d-0fbea365fc1e
+            Authorization: Bearer tg048
+
+    + Attributes (SIGN_IMMUTABLE_PUT_REQUEST)
+
++ Response 200 (application/json)
+
+    + Attributes (SIGN_IMMUTABLE_PUT_RESPONSE)
+
+## Healthcheck [/payments/health]
+
+Payment api healthcheck.  Service for check environment availability.
+
+### Health [GET]
+
+* Paginated &#10006;
+
+* Sortable &#10006;
+
+* Signable &#10006;
+
+### Error Codes
+
+No additional error codes.
+
++ Request (application/json)
+ 
+    + Headers
+    
+            WEB-API-key: <here comes webapi key>
+            Authorization: Bearer test-token
+
++ Response 204 (application/json)
+Successful response for request.
+    + Headers
+    
+            Last-Modified: Wed, 21 Oct 2016 07:28:00 GMT
+
+## Data Structures            
+## Data Structures
+
+## DOMESTIC PAYMENT request (object)
+- senderName: Jiďż˝ina Sigmundovďż˝ (required, string) - name of the transferor
+- sender (object)
+    - number: 000055-91150193 (required, string) - prefix and number of account
+    - bankCode: 0800 (required, string) - sender Bank Code - 4 characters - only 0800 allowed
+    - countryCode: CZ (optional, string)  Code of the Country - 2 characters  - only CZ allowed
+    - iban: CZ2608000000550091150193 (optional, string) - IBAN of transferor
+    - bic: GIBACZPX (optional, string) - BIC of transferor - only GIBACZPX allowed
+- receiverName: Josef Cejnar (required, string)
+- receiver (required, object)
+    - number: 2137-734603134 (required, string) - prefix and number of account
+    - bankCode: 0800 (required, string) - sender Bank Code - 4 characters - only 0800 allowed
+    - countryCode: CZ (optional, string)  Code of the Country - 2 characters  - only CZ allowed
+    - bic: GIBACZPX (optional, string) - reciever banks BIC
+    - iban: CZ6808000021370734603134 (optional, string) - IBAN of receiver
+- amount (object)
+    - value: 100 (required, number) - Amount
+    - precision: 1 (required, number) - Count of digits should be considered to be decimal
+    - currency: CZK (required, string) - Currency code - only CZK allowed
+- transferDate: `2018-03-29` (optional)
+- additionalInfo (optional, object)
+    - text4x35 (optional, array) - recipient notes
+        - `text 1` (optional, string)
+        - `text 2` (optional, string)
+        - `text 3` (optional, string)
+        - `text 4` (optional, string)
+- senderReference: Sender note (optional, string) - sender note
+- symbols (optional, object) - set of transactions symbols
+    - variableSymbol: 1112 (optional, string) - variable symbol
+    - constantSymbol: 3525 (optional, string) - constant symbol
+    - specificSymbol: 1212 (optional, string) - specific symbol
+- flags (optional, array)
+    - urgent
+- confirmations (optional,array) - maximal 1 comfirmation
+    - (object)
+        - email: test@csas.cz (required, string) - email address
+        - language: cs, en (required, enum) - Language for send confirmation
+
+
+
+
+## DOMESTIC PAYMENT response (object)
+- id: 878864 (required, string) - transaction  identifier
+- referenceId: 1212458 (required, string) - transaction identifier
+- orderCategory: DOMESTIC (required, string) - identifier of payment type
+- orderType: PAYMENT_OUT (required, string) - payment order type
+- senderName: Jiďż˝ina Sigmundovďż˝ (required, string) - name of the transferor
+- sender (object)
+    - cz-iban: CZ2608000000550091150193 (optiona, string) - IBAN of transferor
+    - cz-bic: GIBACZPX (optional, string) - BIC of transferor
+    - number: 000055-91150193 (required, string) - prefix and number of account
+    - bankCode: 0800 (required, string) - sender Bank Code - 4 characters
+    - countryCode: CZ (optional, string)  Code of the Country - 2 characters
+- receiverName: Josef Cejnar (required, string)
+- receiver (required, object)
+    - cz-iban: CZ2908000000002427559339 (optiona, string) - IBAN of transferor
+    - cz-bic: GIBACZPX (optional, string) - BIC of transferor
+    - number: 2427559339 (required, string) - prefix and number of account
+    - bankCode: 0800 (required, string) - sender Bank Code - 4 characters
+    - countryCode: CZ (optional, string)  Code of the Country - 2 characters
+- amount (object)
+    - value: 100 (required, number) - Amount
+    - precision: 1 (required, number) - Count of digits should be considered to be decimal
+    - currency: CZK (required, string) - Currency code
+- modificationDate: 2018-03-28T00:00:00+02:00
+- cz-orderingDate: 2018-03-28T00:00:00+02:00
+- transferDate: `2018-03-29`
+- additionalInfo (optional, object)
+    - text4x35 (optional, array) - recipient notes
+        - `text 1` (optional, string)
+        - `text 2` (optional, string)
+        - `text 3` (optional, string)
+        - `text 4` (optional, string)
+- senderReference: Sender note (optional, string) - sender note
+- symbols (optional, object) - set of transactions symbols
+    - variableSymbol: 1112 (optional, string) - Payment Variable symbol.
+    - constantSymbol: 3525 (optional, string) - Payment Constant symbol.
+    - specificSymbol: 1212 (optional, string) - Payment Specific symbol.
+- state: open (optional, string)
+- stateDetail: OPN (optional, string)
+- stateOk: true (boolean)
+- channelId: TPP (optional, string) - for premium api always TPP
+- applicationId: THIRT_PARTY_APPLICATION (optional, string)
+- flags (optional, array)
+    - urgent
+    - editable
+    - deletable
+    - redoable
+- confirmations (array)
+    - (object)
+        - email: test@csas.cz (required, string) - email address
+        - language: cs, en (required, enum) - Language for send confirmation
+- signInfo (required, object)
+    - state: OPEN (required, string) - allowed values - OPEN or NONE
+    - signId: 2caf975faf9fbd7edb8c276abb6690ab30cf534d (optional,string)
+    - exchangeRate: 1.0 USD = 20.162 CZK (optional,string) - Exchange rate for transaction
+    - equivalentAmount (optional, object)        
+        - value: 3255 (required, number)  - Equivalent amount of payment order currency displayed in senders account currency
+        - precision: 1 (required, number) - Count of digits should be considered to be decimal 
+        - currency: PLN (required, string) - Sender's account currrency code
+        
+        
+## SEPA PAYMENT request (object)
+- sender (required, object) - Account number of the sender (embedded ACCOUNTNO type: IBAN with optional BIC or local account number with mandatory local bank code)
+    - iban: CZ1408000020220171817293 (required, string) - IBAN of transferor
+- receiverName: Josef Cejnar (required, string) - Name of receiver of payment order
+- receiver (required, object)
+    - iban: CZ6808000021370734603134 (required, string) - IBAN of receiver
+- receiverAddress (required, array) - Receiver's address. Array of 3x text fields with max 35 characters each, last is ISO country code
+    - Antala Staďż˝ka
+    - Praha
+    - 140 00
+- amount (required, object) - Payment amount in EUR (for SEPA Payments)
+    - value: 100 (required, number) - Amount
+    - precision: 1 (required, number) - Count of digits should be considered to be decimal
+    - currency: EUR (required, string) - Currency code
+- transferDate: `2018-03-29` (required)
+- additionalInfo (optional, object) - Just one of paymentReference and cz-symbols can be filled.
+    - text4x35 (optional, array) - recipient notes
+        - `text 1` (optional, string)
+        - `text 2` (optional, string)
+        - `text 3` (optional, string)
+        - `text 4` (optional, string)
+    - paymentReference: only cz symbols (optional, string)
+- feeSharingCode: OUR, SHA, BEN (required, enum) - Transfer Fee sharing code
+- cz-symbols (optional, object) - Just one of paymentReference and cz-symbols can be filled.
+    - variableSymbol: 1112 (optional, string) - Payment Variable symbol.
+    - constantSymbol: 3525 (optional, string) - Payment Constant symbol.
+    - specificSymbol: 1212 (optional, string) - Payment Specific symbol.
+- flags (optional, array)
+    - urgent
+    - individualConditions
+- confirmations (optional,array) - maximal 1 comfirmation
+    - (object)
+        - email: test@csas.cz (required, string) - email address
+        - language: cs, en (required, enum) - Language for send confirmation
+        
+        
+## SEPA PAYMENT response (object)
+- id: 15242455 (required, string) - transaction identifier
+- referenceId: 1212458 (required, string) - transaction identifier
+- orderCategory: SEPA (required, string) - identifier of payment type
+- orderType: PAYMENT_OUT (required, string) - payment order type
+- senderName: Jiďż˝ina Sigmundovďż˝ (required, string) - name of the transferor
+- sender (object)
+    - iban: CZ2608000000550091150193 (required, string) - IBAN of transferor
+    - bic: GIBACZPX (optional, string) - BIC of transferor
+- receiverName: Josef Cejnar (required, string)
+- receiver (required, object)
+    - iban: CZ2908000000002427559339 (required, string) - IBAN of transferor
+    - bic: GIBACZPX (required, string) - BIC of transferor
+- amount (required, object)
+    - value: 100 (required, number) - Amount
+    - precision: 1 (required, number) - Count of digits should be considered to be decimal
+    - currency: EUR (required, string) - Code of currency
+- transferDate: `2018-03-29` (required)
+- additionalInfo (optional, object)
+    - text4x35 (optional, array) - recipient notes
+        - `text 1` (optional, string)
+        - `text 2` (optional, string)
+        - `text 3` (optional, string)
+        - `text 4` (optional, string)
+    - paymentReference: Payment note (optional, string)
+ - feeSharingCode: SHA (required, string) - Transfer Fee sharing code   
+ - receiverAddress (required, array) - Receiver's address. Array of 3x text fields with max 35 characters each, last is ISO country code
+    - Antala Staďż˝ka
+    - Praha
+    - 140 00   
+- flags (optional, array)
+    - urgent
+    - editable
+    - deletable
+    - individualCondition
+- confirmations (array) - maximal one confirmation
+    - (object)
+        - email: test@csas.cz (required, string) - email address
+        - language: cs, en (required, enum) - Language for send confirmation
+- cz-symbols (optional, object) - set of transactions symbols
+    - variableSymbol: 1112 (optional, string) - Payment Variable symbol.
+    - constantSymbol: 3525 (optional, string) - Payment Constant symbol.
+    - specificSymbol: 1212 (optional, string) - Payment Specific symbol.
+- state: OPEN (optional, string)
+- stateDetail: OPN (optional, string)
+- stateOk: true (boolean)
+- signInfo (required, object)
+    - state: OPEN (required, string) - allowed values - OPEN or NONE
+    - signId: 180423305132209 (optional,string)
+    - exchangeRate: 1 USD = 20.162 CZK, 1 EUR = 26.015 CZK (optional,string) - Exchange rate for transaction
+    - hash: 2be0a1ec1596cd31e30151134058b9332b03014e8f1736e70d46b140a6a41491 (string)
+    - equivalentAmount (optional, object)        
+        - value: 3255 (required, number)  - Equivalent amount of payment order currency displayed in senders account currency
+        - precision: 1 (required, number) - Count of digits should be considered to be decimal 
+        - currency: PLN (required, string) - Sender's account currrency code
+        
+        
+        
+## INTERNATIONAL PAYMENT1 request (object)
+- sender (required, object) - Account number of the sender (embedded ACCOUNTNO type: IBAN with optional BIC or local account number with mandatory local bank code)
+    - iban: CZ1408000020220171817293 (required, string) - IBAN of transferor
+- receiverName: Josef Cejnar (required, string) - Name of receiver of payment order
+- receiver (required, object)
+    - iban: DK5000400440116243 (optional, string) - IBAN of transferor
+    - bic: NDEADKKKXXX (optional, string) - BIC of transferor - only GIBACZPX allowed
+    - countryCode: DK (optional, string)  Code of the Country - 2 characters
+- receiverAddress (required, array) - Receiver's address. Array of 3x text fields with max 35 characters each, last is ISO country code
+    - Antala Staďż˝ka
+    - Praha
+    - 140 00
+- amount (required, object) - Payment amount in EUR (for SEPA Payments)
+    - value: 100 (required, number) - Amount
+    - precision: 1 (required, number) - Count of digits should be considered to be decimal
+    - currency: PLN (required, string) - Currency code
+- additionalInfo (optional, object)
+    - text4x35 (optional, array) - recipient notes
+        - `text 1` (optional, string)
+        - `text 2` (optional, string)
+        - `text 3` (optional, string)
+        - `text 4` (optional, string)
+- transferDate: `2018-03-29` (required)
+- feeSharingCode: OUR, SHA, BEN (required, enum) - Transfer Fee sharing code
+- flags (optional, array)
+    - urgent
+    - individualConditions
+- confirmations (optional,array) - maximal 1 comfirmation
+    - (object)
+        - email: test@csas.cz (required, string)
+        - language: cs, en (required, enum)
+        
+
+## INTERNATIONAL PAYMENT2 request (object)
+- sender (required, object) - Account number of the sender (embedded ACCOUNTNO type: IBAN with optional BIC or local account number with mandatory local bank code)
+    - iban: CZ1408000020220171817293 (required, string) - IBAN of transferor
+- receiverName: Josef Cejnar (required, string) - Name of receiver of payment order
+- receiver (required, object)
+    - bic: SABRRUMM012 (optional, string) - BIC of transferor - only GIBACZPX allowed
+    - number: 30101810400000000225 (optional, string) - prefix and number of account - using for countries without iban code
+    - countryCode: RU (optional, string)  Code of the Country - 2 characters
+- receiverAddress (required, array) - Receiver's address. Array of 3x text fields with max 35 characters each, last is ISO country code
+    - Antala Staďż˝ka
+    - Praha
+    - 140 00
+- amount (required, object) - Payment amount in EUR (for SEPA Payments)
+    - value: 100 (required, number) - Amount of payment
+    - precision: 1 (required, number) - Count of digits should be considered to be decimal
+    - currency: PLN (required, string) - Code of payment currency
+- additionalInfo (optional, object)
+    - text4x35 (optional, array) - recipient notes
+        - `text 1` (optional, string)
+        - `text 2` (optional, string)
+        - `text 3` (optional, string)
+        - `text 4` (optional, string)
+- transferDate: `2018-03-29` (required)
+- feeSharingCode: OUR, SHA, BEN (required, enum) - Transfer Fee sharing code
+- flags (optional, array)
+    - urgent
+    - individualConditions
+- confirmations (optional,array) - maximal 1 comfirmation
+    - (object)
+        - email: test@csas.cz (required, string) - email address
+        - language: cs, en (required, enum) - Language for send confirmation
+        
+## INTERNATIONAL PAYMENT1 response (object)
+- id: 15242455 (required, string) - transaction identifier
+- referenceId: 1212458 (required, string) - transaction identifier
+- orderCategory: INTERNATIONAL (required, string) - identifier of payment type
+- orderType: PAYMENT_OUT (required, string) - payment order type
+- senderName: Jiďż˝ina Sigmundovďż˝ (required, string) - name of the transferor
+- sender (object)
+    - iban: CZ2608000000550091150193 (required, string) - IBAN of transferor
+    - bic: GIBACZPX (optional, string) - BIC of transferor
+- receiverName: Josef Cejnar (required, string)
+- receiver (required, object)
+    - iban: DK5000400440116243 (optional, string) - IBAN of transferor
+    - bic: NDEADKKKXXX (optional, string) - BIC of transferor
+    - countryCode: DK (optional, string)  Code of the Country - 2 characters    
+- amount (required, object)
+    - value: 100 (required, number) - Amount
+    - precision: 1 (required, number) - Count of digits should be considered to be decimal
+    - currency: PLN (required, string) - Code of currency
+- transferDate: `2018-03-29` (required)
+- additionalInfo (optional, object)
+    - text4x35 (optional, array) - recipient notes
+        - `text 1` (optional, string)
+        - `text 2` (optional, string)
+        - `text 3` (optional, string)
+        - `text 4` (optional, string)
+ - feeSharingCode: SHA (required, string) - Transfer Fee sharing code   
+ - receiverAddress (required, array) - Receiver's address. Array of 3x text fields with max 35 characters each, last is ISO country code
+    - Antala Staďż˝ka
+    - Praha
+    - 140 00
+- receiverBankName: SPERBANK (optional, string) - Receivers bank 
+- state: OPEN (optional, string)
+- stateDetail: OPN (optional, string)
+- stateOk: true (boolean)
+- flags (optional, array)
+    - urgent
+    - editable
+    - deletable
+    - individualCondition
+- confirmations (array) - maximal one confirmation
+    - (object)
+        - email: test@csas.cz (required, string) - email address
+        - language: cs, en (required, enum) - Language for send confirmation
+- signInfo (required, object)
+    - hash: e68c5e603a8a3e8c8b9e21997349d845534cd9148d4b760ae66e6b2be739476e (string)
+    - state: OPEN (required, string) - allowed values - OPEN or NONE
+    - signId: 2caf975faf9fbd7edb8c276abb6690ab30cf534d (optional,string)
+    - exchangeRate: 1 USD = 20.162 CZK, 1 PLN = 6.238 CZK (optional,string) - Exchange rate for transaction
+    - equivalentAmount (optional, object)        
+        - value: 3255 (required, number)  - Equivalent amount of payment order currency displayed in senders account currency
+        - precision: 1 (required, number) - Count of digits should be considered to be decimal 
+        - currency: USD (required, string) - Sender's account currrency code
+        
+## INTERNATIONAL PAYMENT2 response (object)
+- id: 15242455 (required, string) - transaction identifier
+- referenceId: 1212458 (required, string) - transaction identifier
+- orderCategory: INTERNATIONAL (required, string) - identifier of payment type
+- orderType: PAYMENT_OUT (required, string) - payment order type
+- senderName: Jiďż˝ina Sigmundovďż˝ (required, string) - name of the transferor
+- sender (object)
+    - iban: CZ2608000000550091150193 (required, string) - IBAN of transferor
+    - bic: GIBACZPX (optional, string) - BIC of transferor
+- receiverName: Josef Cejnar (required, string)
+- receiver (required, object)
+    - bic: SABRRUMM012 (optional, string) - BIC of transferor
+    - number: 30101810400000000225 (optional, string) - prefix and number of account - using for countries without iban code
+    - countryCode: RU (optional, string)  Code of the Country - 2 characters    
+- amount (required, object)
+    - value: 100 (required, number) - Amount
+    - precision: 1 (required, number) - Count of digits should be considered to be decimal
+    - currency: PLN (required, string) - Currency code
+- transferDate: `2018-03-29` (required)
+- additionalInfo (optional, object)
+    - text4x35 (optional, array) - recipient notes
+        - `text 1` (optional, string)
+        - `text 2` (optional, string)
+        - `text 3` (optional, string)
+        - `text 4` (optional, string)
+ - feeSharingCode: SHA (required, string) - Transfer Fee sharing code   
+ - receiverAddress (required, array) - Receiver's address. Array of 3x text fields with max 35 characters each, last is ISO country code
+    - Antala Staďż˝ka
+    - Praha
+    - 140 00
+- receiverBankName: SPERBANK (optional, string) - Receivers bank 
+- state: OPEN (optional, string)
+- stateDetail: OPN (optional, string)
+- stateOk: true (boolean)
+- flags (optional, array)
+    - urgent
+    - editable
+    - deletable
+    - individualCondition
+- confirmations (array) - maximal one confirmation                             
+    - (object)
+        - email: test@csas.cz (required, string) - email address
+        - language: cs, en (required, enum) - Language for send confirmation
+- signInfo (required, object)
+    - hash: e68c5e603a8a3e8c8b9e21997349d845534cd9148d4b760ae66e6b2be739476e (string)
+    - state: OPEN (required, string) - allowed values - OPEN or NONE
+    - signId: 2caf975faf9fbd7edb8c276abb6690ab30cf534d (optional,string)
+    - exchangeRate: 1 USD = 20.162 CZK, 1 PLN = 6.238 CZK (optional,string) - Exchange rate for transaction
+    - equivalentAmount (optional, object)        
+        - value: 3255 (required, number)  - Equivalent amount of payment order currency displayed in senders account currency
+        - precision: 1 (required, number) - Count of digits should be considered to be decimal 
+        - currency: USD (required, string) - Senders account currrency       
+        
+### `BUNDLE_SIGN_PUT_RESPONSE` (object)
+
+Object which represents bundle. Bundle is collection of payment orders which can be authorized/signed at once.
+
+#### Properties
+
+- id: jf83ksapoe01 (string, required) - Bundle identifier.
+- name: Balďż˝ďż˝ek 1 (string, optional) - Name of the bundle.
+- items (array[BUNDLE_ITEM_SIGN_PUT_RESPONSE], required) - Array of items in bundle. Every item represents payment order for batch sign.
+
+### `BUNDLE_ITEM_SIGN_PUT_RESPONSE` (object)
+
+Payment order in the bundle.
+
+#### Properties
+
+- id: 84521478awd85441 (string, required) - Payment order identifier.
+- signInfo (object, required) - Sign info status information for particular payment order as bundle item. Signing of bundle is not atomic transaction, if some items fail and others succeed, it is normal case, therefore sign state of items in bundle can be different.
+    - state: OPEN (enum, required) - State of the signing process for payment order.
+        - OPEN - Order sign failed and should be signed again.
+        - DONE - Order was signed succesfully.
+    - signId: 2caf975faf9fbd7edb8c276abb6690ab30cf534d (string, optional) - Hash value of the payment order.
+
+### `SIGN_AUTHORIZATION_TYPE` (enum)
+
+Authorization methods.
+
+#### Default
+
+- TAC
+
+#### Members
+
+- NO\_AUTHORIZATION - validation of user response as confirmation (e.g. confirm button click)
+- TAC - validation of user response as randomly generated number/code sent to user personal device via SMS
+- CASE\_MOBILE - validation of user response using mobile application
+
+### `SIGN_IMMUTABLE_GET_RESPONSE` (object)
+
+Object for response of immutable GET signing method.
+
+#### Properties
+
+- authorizationType: TAC (SIGN_AUTHORIZATION_TYPE, required) - Identifier of preferred authorization method type (possible values NO\_AUTHORIZATION, TAC, CASE\_MOBILE). Method is listed in scenarios as the first one if there are any.
+- Include SIGN_SCENARIOS
+- Include SIGNINFO_SIGNING_PROCESS
+
+### `SIGN_IMMUTABLE_POST_REQUEST` (object)
+
+Object for request of immutable POST signing method.
+
+#### Properties
+
+- authorizationType: TAC (SIGN_AUTHORIZATION_TYPE, required) - Identifier of the authorization method type which was chosen by client (possible values NO\_AUTHORIZATION, TAC, CASE\_MOBILE). Method have to be listed in scenarios as the first one if there are any.
+
+### `SIGN_IMMUTABLE_POST_RESPONSE` (object)
+
+Object for response of immutable POST signing method.
+
+#### Properties
+
+- authorizationType: TAC (SIGN_AUTHORIZATION_TYPE, required) - Identifier of the authorization method which was launched by request (possible values NO\_AUTHORIZATION, TAC, CASE\_MOBILE). Method is listed in scenarios as the first one if there are any.
+- challengeImage: `iVBORw0KGgoA...` (string, optional) - QR code in BASE64, only provided for CASE\_MOBILE. User smartphone must scan this image and mobile application should extract input parameters out of it. If the attribute is not available, then authorization over CASE\_MOBILE OFFLINE is not possible.
+- poll (SIGN_POLL_INFORMATION, optional) - Polling information for the requested order for CASE\_MOBILE.
+- Include SIGNINFO_SIGNING_PROCESS
+
+### `SIGN_IMMUTABLE_PUT_REQUEST` (object)
+
+Object for request of immutable PUT signing method.
+
+#### Properties
+
+- authorizationType: TAC (SIGN_AUTHORIZATION_TYPE, required) - Identifier of the authorization method type which is currently in process (possible values NO\_AUTHORIZATION, TAC, CASE\_MOBILE).
+- oneTimePassword: 12345 (string, optional) - OTP is in general temporary valid code for any challenge request code for particular authorization, e.g. OTP provided via SMS for TAC authorization or generated response code from smartphone application in CASE\_MOBILE authorization.
+
+### `SIGN_IMMUTABLE_PUT_RESPONSE` (object)
+
+Object for response of immutable PUT signing method.
+
+#### Properties
+
+- Include SIGNINFO_SIGNING_METHOD_DONE
+
+
+### `SIGN_POLLING_RESPONSE` (object)
+
+Object for polling resource response.
+
+#### Properties
+
+- state: DONE (SIGN_POLLING_STATE, required) - State of the CASE\_MOBILE signing process.
+- pollInterval: 5000 (number, required) - Polling interval in miliseconds. How often you should check.
+
+### `SIGN_POLL_INFORMATION` (object)
+
+Object for poll information using in signing.
+
+#### Properties
+
+- url: `http://www.csast.csas.cz/webapi/api/v2/sign/poll/160527036796442` (string, required) - Polling URL to retrieve state of the sign process. Signing process could be finished externally (for example by mobile application). In this case you are able to check state of the process.
+- id: 160527036796442 (string, required) - Polling ID generated.
+- interval: 5000 (number, required) - Polling interval in miliseconds. How often you should check.
+
+### `SIGN_SCENARIOS` (object)
+
+Array of possible signing scenarios (list of scenarios and their methods in predefined order).
+
+#### Properties
+
+- scenarios (array, optional) - Array of possible more scenarios (list of scenarios and their methods in predefined order). If there is only one scenario with one step then scenarios array isn't returned and only authorizationType property is used.
+    - (array)
+        - TAC (string)
+        - CASE_MOBILE (string)
+    - (array)
+        - NONE (string)
+
+### `SIGNINFO_SIGNING_METHOD_DONE` (object)
+
+Object which contains information needed to sign changes which where made by current action.
+
+#### Properties
+
+- signInfo (object,required) - Object which contains information about the state of the current signing process.
+    - state: DONE (SIGN_METHOD_DONE_STATE, required) - Field which controls whether signing is was already finished or you have to continue with next scenario method.
+    - signId: 151112531008554 (string, optional) - Identifier of the change you are currently signing.
+
+### `SIGNINFO_SIGNING_PROCESS` (object)
+
+Object which contains information about signing process state and all relevant information needed to complete the process.
+
+#### Properties
+
+- signInfo (object,required) - Object which contains information about signing process state and all relevant information needed to complete the process.
+    - state: OPEN (SIGN_PROCESS_STATE, required) - State of the signing process.
+    - signId: 151112531008554 (string, optional) - Identifier of the change which you are signing right now.
+
+### `SIGN_METHOD_DONE_STATE` (enum)
+
+Enum for the states of the signing when signing method was finished successfully.
+
+#### Members
+
+- OPEN - Signing process hasn't been finished. You have to continue with next method in scenario in order to successfully sign change.
+- DONE - Signing process was successfully finished and signed change was applied.
+
+### `SIGN_POLLING_STATE` (enum)
+
+Enum of sign states polling.
+
+### Sample
+
+- DONE
+
+#### Members
+
+- PROCESSING - Authorization in process.
+- DONE - Authorizatin successfully finished.
+- FALLBACK - Alternative authorization on FE should be activated.
+- REJECTED - Authorization rejected by user, authorization flow should be closed in FE without signing
+- ORDER_PROCESSING_FAILED - Authorization was successful but processing of the authorized order has failed.
+
+### `SIGN_PROCESS_STATE` (enum)
+
+Enum for the states of the signing when signing is in process.
+
+#### Members
+
+- OPEN - Signing process hasn't been finished. You have to continue in order to successfully sign change.
